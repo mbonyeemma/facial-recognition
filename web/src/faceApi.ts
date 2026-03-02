@@ -17,6 +17,20 @@ async function post<T>(path: string, body: object): Promise<T> {
   return res.json();
 }
 
+export type CountryConfig = {
+  code: string;
+  name: string;
+  flag: string;
+  docs: string[];
+};
+
+/** Fetch countries & doc types from backend (no hardcoding) */
+export async function fetchConfig(): Promise<{ countries: CountryConfig[] }> {
+  const res = await fetch(`${API_BASE}/config`);
+  if (!res.ok) throw new Error("Failed to load config");
+  return res.json();
+}
+
 /** No-op for compatibility - models load on backend */
 export async function loadFaceApiModels(): Promise<boolean> {
   try {
@@ -27,38 +41,50 @@ export async function loadFaceApiModels(): Promise<boolean> {
   }
 }
 
-/** Document quality: send image to backend */
-export async function analyzeDocQuality(imageUrl: string): Promise<number> {
-  const { score } = await post<{ score: number }>("/analyze-doc", {
+/** Document quality: send image to backend. Returns { score, url }. */
+export async function analyzeDocQuality(
+  imageUrl: string,
+  sessionId?: string,
+  type: "doc" | "docBack" = "doc"
+): Promise<{ score: number; url: string }> {
+  const res = await post<{ score: number; url: string }>("/analyze-doc", {
     image: imageUrl,
+    ...(sessionId && { sessionId }),
+    type,
   });
-  return score;
+  return { score: res.score, url: res.url ?? "" };
 }
 
-/** Face match: send doc + selfie to backend */
+/** Face match: send doc + selfie to backend. Returns { score, url }. */
 export async function compareFaces(
   documentImageUrl: string,
-  selfieImageUrl: string
-): Promise<number> {
-  const { score } = await post<{ score: number }>("/compare-faces", {
+  selfieImageUrl: string,
+  sessionId?: string
+): Promise<{ score: number; url: string }> {
+  const res = await post<{ score: number; url: string }>("/compare-faces", {
     document: documentImageUrl,
     selfie: selfieImageUrl,
+    ...(sessionId && { sessionId }),
   });
-  return score;
+  return { score: res.score, url: res.url ?? "" };
 }
 
-/** Liveness: capture frame from video, send to backend */
-export async function analyzeLiveness(videoElement: HTMLVideoElement): Promise<number> {
+/** Liveness: capture frame from video, send to backend. Returns { score, url }. */
+export async function analyzeLiveness(
+  videoElement: HTMLVideoElement,
+  sessionId?: string
+): Promise<{ score: number; url: string }> {
   const canvas = document.createElement("canvas");
   canvas.width = videoElement.videoWidth;
   canvas.height = videoElement.videoHeight;
   const ctx = canvas.getContext("2d");
-  if (!ctx) return 70;
+  if (!ctx) return { score: 70, url: "" };
   ctx.drawImage(videoElement, 0, 0);
   const imageUrl = canvas.toDataURL("image/jpeg", 0.9);
 
-  const { score } = await post<{ score: number }>("/analyze-liveness", {
+  const res = await post<{ score: number; url: string }>("/analyze-liveness", {
     image: imageUrl,
+    ...(sessionId && { sessionId }),
   });
-  return score;
+  return { score: res.score, url: res.url ?? "" };
 }

@@ -16,6 +16,7 @@ bava-kyc/
 - Node.js 18+
 - AWS account with Rekognition access
 - IAM permissions: `rekognition:DetectFaces`, `rekognition:CompareFaces`
+- S3 bucket (optional): for storing KYC images. Set `AWS_S3_BUCKET` to enable uploads.
 
 ## Quick Start
 
@@ -65,6 +66,7 @@ cd web && npm run dev:web
 | `AWS_ACCESS_KEY_ID` | AWS access key |
 | `AWS_SECRET_ACCESS_KEY` | AWS secret key |
 | `AWS_REGION` | AWS region (default: us-east-1) |
+| `AWS_S3_BUCKET` | S3 bucket for KYC images (optional; if set, images are uploaded and URLs returned) |
 | `VITE_KYC_API_URL` | API URL for production (default: `/kyc-api`) |
 | `PORT` | API port (default: 3001) |
 
@@ -72,9 +74,10 @@ cd web && npm run dev:web
 
 | Method | Path | Body | Response |
 |--------|------|------|----------|
-| POST | `/analyze-doc` | `{ image: "data:image/jpeg;base64,..." }` | `{ score: 0-100 }` |
-| POST | `/compare-faces` | `{ document: "...", selfie: "..." }` | `{ score: 0-100 }` |
-| POST | `/analyze-liveness` | `{ image: "data:image/jpeg;base64,..." }` | `{ score: 0-100 }` |
+| GET | `/config` | - | `{ countries: [...] }` |
+| POST | `/analyze-doc` | `{ image: "data:image/jpeg;base64,...", sessionId?, type?: "doc"\|"docBack" }` | `{ score: 0-100, url?: string }` |
+| POST | `/compare-faces` | `{ document: "...", selfie: "...", sessionId? }` | `{ score: 0-100, url?: string }` |
+| POST | `/analyze-liveness` | `{ image: "data:image/jpeg;base64,...", sessionId? }` | `{ score: 0-100, url?: string }` |
 
 ## Build
 

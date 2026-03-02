@@ -1,27 +1,25 @@
 import { useState, useRef, useEffect } from "react";
 import {
   loadFaceApiModels,
+  fetchConfig,
   analyzeDocQuality as faceApiDocQuality,
   compareFaces as faceApiCompareFaces,
   analyzeLiveness as faceApiLiveness,
 } from "./faceApi";
-
-/* ─── DATA ──────────────────────────────────────────────────────────────── */
-const COUNTRIES = [
-  { code: "UG", name: "Uganda", flag: "🇺🇬", docs: ["National ID", "Passport", "Driving Permit"] },
-  { code: "KE", name: "Kenya", flag: "🇰🇪", docs: ["National ID", "Passport", "Driving Licence"] },
-  { code: "TZ", name: "Tanzania", flag: "🇹🇿", docs: ["National ID", "Passport", "Driving Licence"] },
-];
-
-const CHALLENGES = [
-  { id: "blink", icon: "👁️", text: "Blink twice slowly", sub: "Keep eyes open normally first" },
-  { id: "smile", icon: "😊", text: "Smile naturally", sub: "Show your teeth slightly" },
-  { id: "left", icon: "⬅️", text: "Turn head to your left", sub: "Slowly, then back to center" },
-  { id: "right", icon: "➡️", text: "Turn head to your right", sub: "Slowly, then back to center" },
-];
+import type { CountryConfig } from "./faceApi";
 
 /* ─── HELPERS ────────────────────────────────────────────────────────────── */
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Convert File to base64 data URL for API (must be data URL, not blob URL) */
+async function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result as string);
+    r.onerror = () => reject(new Error("Failed to read file"));
+    r.readAsDataURL(file);
+  });
+}
 const calcScore = (f: number, l: number, d: number) =>
   Math.round(f * 0.45 + l * 0.35 + d * 0.2);
 
@@ -37,7 +35,7 @@ const CSS = `
   @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Clash+Display:wght@500;600;700&display=swap');
   *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
   html,body{height:100%;overflow-x:hidden;}
-  body{background:#07080f;font-family:'DM Mono',monospace;}
+  body{background:#f8f9fa;font-family:'DM Mono',monospace;}
   ::-webkit-scrollbar{display:none;}
   @keyframes fadeUp{from{opacity:0;transform:translateY(22px)}to{opacity:1;transform:translateY(0)}}
   @keyframes spin{to{transform:rotate(360deg)}}
@@ -54,7 +52,7 @@ const CSS = `
 const S = {
   screen: {
     minHeight: "100dvh",
-    background: "#07080f",
+    background: "#f8f9fa",
     display: "flex" as const,
     flexDirection: "column" as const,
     alignItems: "center",
@@ -69,15 +67,15 @@ const S = {
   },
   card: (extra: React.CSSProperties = {}) => ({
     width: "calc(100% - 32px)",
-    background: "#0d0f1c",
-    border: "1px solid #1c1f35",
+    background: "#fff",
+    border: "1px solid #e2e8f0",
     borderRadius: 20,
     padding: "24px 20px",
     marginTop: 16,
     ...extra,
   }),
   label: {
-    color: "#3d4466",
+    color: "#64748b",
     fontSize: 11,
     letterSpacing: 2,
     fontWeight: 500,
@@ -86,15 +84,15 @@ const S = {
   },
   select: {
     width: "100%",
-    background: "#12152a",
-    color: "#e0e4ff",
-    border: "1.5px solid #1c1f35",
+    background: "#fff",
+    color: "#1a1a2e",
+    border: "1.5px solid #e2e8f0",
     borderRadius: 14,
     padding: "16px 18px",
     fontSize: 16,
     fontFamily: "'DM Mono',monospace",
     appearance: "none" as const,
-    backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%234a5080' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E")`,
+    backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%2364748b' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E")`,
     backgroundRepeat: "no-repeat",
     backgroundPosition: "right 16px center",
   },
@@ -102,8 +100,8 @@ const S = {
     width: "100%",
     padding: "18px",
     borderRadius: 16,
-    background: disabled ? "#1a1d32" : "linear-gradient(135deg,#5b6ef5,#7c3aed)",
-    color: disabled ? "#2d3060" : "#fff",
+    background: disabled ? "#e2e8f0" : "linear-gradient(135deg,#5b6ef5,#7c3aed)",
+    color: disabled ? "#94a3b8" : "#fff",
     fontSize: 16,
     fontWeight: 700,
     fontFamily: "'DM Mono',monospace",
@@ -122,7 +120,7 @@ const S = {
     fontSize: 15,
     fontWeight: 600,
     fontFamily: "'DM Mono',monospace",
-    border: "1.5px solid #5b6ef530",
+    border: "1.5px solid #e2e8f0",
     cursor: "pointer",
   },
   pill: (active: boolean) => ({
@@ -133,9 +131,9 @@ const S = {
     fontSize: 13,
     fontWeight: 600,
     cursor: "pointer",
-    border: active ? "1.5px solid #5b6ef5" : "1.5px solid #1c1f35",
+    border: active ? "1.5px solid #5b6ef5" : "1.5px solid #e2e8f0",
     background: active ? "#5b6ef518" : "transparent",
-    color: active ? "#8b9cff" : "#3d4466",
+    color: active ? "#5b6ef5" : "#64748b",
     transition: "all .2s",
   }),
 };
@@ -155,12 +153,12 @@ function TopBar({
         <button
           onClick={onBack}
           style={{
-            background: "#12152a",
-            border: "1.5px solid #1c1f35",
+            background: "#fff",
+            border: "1.5px solid #e2e8f0",
             borderRadius: 12,
             width: 40,
             height: 40,
-            color: "#8b9cff",
+            color: "#5b6ef5",
             fontSize: 18,
             cursor: "pointer",
             display: "flex",
@@ -174,14 +172,14 @@ function TopBar({
       )}
       <div style={{ flex: 1 }}>
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-          <span style={{ color: "#3d4466", fontSize: 11, letterSpacing: 2 }}>
+          <span style={{ color: "#64748b", fontSize: 11, letterSpacing: 2 }}>
             STEP {step} / {total}
           </span>
           <span style={{ color: "#5b6ef5", fontSize: 11, letterSpacing: 1 }}>
             {Math.round((step / total) * 100)}%
           </span>
         </div>
-        <div style={{ height: 3, background: "#1c1f35", borderRadius: 2 }}>
+        <div style={{ height: 3, background: "#e2e8f0", borderRadius: 2 }}>
           <div
             style={{
               height: "100%",
@@ -207,7 +205,7 @@ function ScoreRing({ score, color }: { score: number; color: string }) {
       height="130"
       style={{ animation: "ringPop .6s cubic-bezier(.22,1,.36,1) both" }}
     >
-      <circle cx="65" cy="65" r={r} fill="none" stroke="#1c1f35" strokeWidth="8" />
+      <circle cx="65" cy="65" r={r} fill="none" stroke="#e2e8f0" strokeWidth="8" />
       <circle
         cx="65"
         cy="65"
@@ -228,7 +226,7 @@ function ScoreRing({ score, color }: { score: number; color: string }) {
         x="65"
         y="60"
         textAnchor="middle"
-        fill="#e0e4ff"
+        fill="#1a1a2e"
         fontSize="26"
         fontWeight="700"
         fontFamily="'DM Mono',monospace"
@@ -239,7 +237,7 @@ function ScoreRing({ score, color }: { score: number; color: string }) {
         x="65"
         y="78"
         textAnchor="middle"
-        fill="#3d4466"
+        fill="#64748b"
         fontSize="11"
         fontFamily="'DM Mono',monospace"
       >
@@ -488,27 +486,42 @@ function CameraOverlay({
 }
 
 /* ─── STEP 1: Country & Document ─────────────────────────────────────────── */
-function StepCountry({ onNext }: { onNext: (d: Record<string, unknown>) => void }) {
+const FALLBACK_COUNTRIES: CountryConfig[] = [
+  { code: "UG", name: "Uganda", flag: "🇺🇬", docs: ["National ID", "Passport", "Driving Permit"] },
+  { code: "KE", name: "Kenya", flag: "🇰🇪", docs: ["National ID", "Passport", "Driving Licence"] },
+  { code: "TZ", name: "Tanzania", flag: "🇹🇿", docs: ["National ID", "Passport", "Driving Licence"] },
+];
+
+function StepCountry({
+  countries,
+  onNext,
+}: {
+  countries: CountryConfig[];
+  onNext: (d: Record<string, unknown>) => void;
+}) {
   const [country, setCountry] = useState("");
   const [docType, setDocType] = useState("");
-  const sel = COUNTRIES.find((c) => c.code === country);
+  const sel = countries.find((c) => c.code === country);
 
   return (
     <div
       className="fadeUp"
       style={{
         width: "100%",
-        padding: "0 16px",
+        flex: 1,
+        overflowY: "auto",
+        padding: "0 16px 24px",
         display: "flex",
         flexDirection: "column",
         gap: 16,
         paddingTop: 8,
+        WebkitOverflowScrolling: "touch",
       }}
     >
       <div style={S.card()}>
         <h2
           style={{
-            color: "#e0e4ff",
+            color: "#1a1a2e",
             fontSize: 22,
             fontFamily: "'DM Mono',monospace",
             marginBottom: 4,
@@ -516,7 +529,7 @@ function StepCountry({ onNext }: { onNext: (d: Record<string, unknown>) => void 
         >
           Let's verify you 👋
         </h2>
-        <p style={{ color: "#3d4466", fontSize: 13, lineHeight: 1.6 }}>
+        <p style={{ color: "#64748b", fontSize: 13, lineHeight: 1.6 }}>
           We'll need your ID and a quick selfie. Takes about 2 minutes.
         </p>
       </div>
@@ -533,7 +546,7 @@ function StepCountry({ onNext }: { onNext: (d: Record<string, unknown>) => void 
             style={S.select}
           >
             <option value="">Select country…</option>
-            {COUNTRIES.map((c) => (
+            {countries.map((c) => (
               <option key={c.code} value={c.code}>
                 {c.flag} {c.name}
               </option>
@@ -545,37 +558,31 @@ function StepCountry({ onNext }: { onNext: (d: Record<string, unknown>) => void 
       {sel && (
         <div className="fadeUp" style={S.card()}>
           <label style={S.label}>DOCUMENT TYPE</label>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <select
+            value={docType}
+            onChange={(e) => setDocType(e.target.value)}
+            style={S.select}
+          >
+            <option value="">Select document type…</option>
             {sel.docs.map((d) => (
-              <div
-                key={d}
-                onClick={() => setDocType(d)}
-                style={{
-                  padding: "15px 16px",
-                  borderRadius: 14,
-                  cursor: "pointer",
-                  border: docType === d ? "1.5px solid #5b6ef5" : "1.5px solid #1c1f35",
-                  background: docType === d ? "#5b6ef510" : "#12152a",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  transition: "all .2s",
-                }}
-              >
-                <span style={{ color: docType === d ? "#8b9cff" : "#4a5080", fontSize: 15 }}>
-                  {d}
-                </span>
-                {docType === d && <span style={{ color: "#5b6ef5" }}>✓</span>}
-              </div>
+              <option key={d} value={d}>
+                {d}
+              </option>
             ))}
-          </div>
+          </select>
         </div>
       )}
 
       <button
         style={S.primaryBtn(!country || !docType)}
         disabled={!country || !docType}
-        onClick={() => onNext({ country: sel, docType })}
+        onClick={() =>
+          onNext({
+            country: sel,
+            docType,
+            sessionId: `kyc-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+          })
+        }
       >
         Continue
       </button>
@@ -588,7 +595,7 @@ function StepDocFront({
   data,
   onNext,
 }: {
-  data: { country: (typeof COUNTRIES)[0]; docType: string };
+  data: { country: CountryConfig; docType: string; sessionId?: string };
   onNext: (d: Record<string, unknown>) => void;
 }) {
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -601,17 +608,17 @@ function StepDocFront({
   async function analyze(url: string) {
     setLoading(true);
     setQuality(null);
-    const q = await faceApiDocQuality(url);
-    setQuality(q);
+    const { score } = await faceApiDocQuality(url, data.sessionId as string | undefined);
+    setQuality(score);
     setLoading(false);
   }
 
-  function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
     if (!f) return;
-    const url = URL.createObjectURL(f);
-    setImg(url);
-    analyze(url);
+    const dataUrl = await fileToDataUrl(f);
+    setImg(dataUrl);
+    analyze(dataUrl);
   }
 
   return (
@@ -619,10 +626,13 @@ function StepDocFront({
       className="fadeUp"
       style={{
         width: "100%",
-        padding: "0 16px",
+        flex: 1,
+        overflowY: "auto",
+        padding: "0 16px 24px",
         display: "flex",
         flexDirection: "column",
         gap: 14,
+        WebkitOverflowScrolling: "touch",
       }}
     >
       {cam && (
@@ -639,15 +649,15 @@ function StepDocFront({
       )}
 
       <div style={S.card()}>
-        <p style={{ color: "#3d4466", fontSize: 11, letterSpacing: 2, marginBottom: 4 }}>
+        <p style={{ color: "#64748b", fontSize: 11, letterSpacing: 2, marginBottom: 4 }}>
           {data.country.flag} {data.country.name} · {data.docType}
         </p>
         <h2
-          style={{ color: "#e0e4ff", fontSize: 20, fontFamily: "'DM Mono',monospace" }}
+          style={{ color: "#1a1a2e", fontSize: 20, fontFamily: "'DM Mono',monospace" }}
         >
           📄 Front of document
         </h2>
-        <p style={{ color: "#3d4466", fontSize: 13, marginTop: 6, lineHeight: 1.6 }}>
+        <p style={{ color: "#64748b", fontSize: 13, marginTop: 6, lineHeight: 1.6 }}>
           Make sure all text is clear and there's no glare or blur.
         </p>
       </div>
@@ -661,8 +671,8 @@ function StepDocFront({
           borderRadius: 20,
           overflow: "hidden",
           position: "relative",
-          border: img ? "none" : "2px dashed #1c1f35",
-          background: img ? "transparent" : "#0d0f1c",
+          border: img ? "none" : "2px dashed #e2e8f0",
+          background: img ? "transparent" : "#fff",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -674,7 +684,7 @@ function StepDocFront({
         ) : (
           <div style={{ textAlign: "center" }}>
             <div style={{ fontSize: 40, marginBottom: 10 }}>🪪</div>
-            <p style={{ color: "#3d4466", fontSize: 14 }}>Tap to capture</p>
+            <p style={{ color: "#64748b", fontSize: 14 }}>Tap to capture</p>
           </div>
         )}
         {quality && (
@@ -701,7 +711,7 @@ function StepDocFront({
             style={{
               position: "absolute",
               inset: 0,
-              background: "#07080fcc",
+              background: "#f8f9facc",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -712,7 +722,7 @@ function StepDocFront({
               style={{
                 width: 32,
                 height: 32,
-                border: "3px solid #1c1f35",
+                border: "3px solid #e2e8f0",
                 borderTopColor: "#5b6ef5",
                 borderRadius: "50%",
               }}
@@ -782,7 +792,7 @@ function StepDocBack({
   data,
   onNext,
 }: {
-  data: { docType: string };
+  data: { docType: string; sessionId?: string };
   onNext: (d: Record<string, unknown>) => void;
 }) {
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -794,17 +804,17 @@ function StepDocBack({
   async function analyze(url: string) {
     setLoad(true);
     setQual(null);
-    const q = await faceApiDocQuality(url);
-    setQual(q);
+    const { score } = await faceApiDocQuality(url, data.sessionId as string | undefined, "docBack");
+    setQual(score);
     setLoad(false);
   }
 
-  function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
     if (!f) return;
-    const url = URL.createObjectURL(f);
-    setImg(url);
-    analyze(url);
+    const dataUrl = await fileToDataUrl(f);
+    setImg(dataUrl);
+    analyze(dataUrl);
   }
 
   return (
@@ -812,10 +822,13 @@ function StepDocBack({
       className="fadeUp"
       style={{
         width: "100%",
-        padding: "0 16px",
+        flex: 1,
+        overflowY: "auto",
+        padding: "0 16px 24px",
         display: "flex",
         flexDirection: "column",
         gap: 14,
+        WebkitOverflowScrolling: "touch",
       }}
     >
       {cam && (
@@ -833,11 +846,11 @@ function StepDocBack({
 
       <div style={S.card()}>
         <h2
-          style={{ color: "#e0e4ff", fontSize: 20, fontFamily: "'DM Mono',monospace" }}
+          style={{ color: "#1a1a2e", fontSize: 20, fontFamily: "'DM Mono',monospace" }}
         >
           🔄 Back of document
         </h2>
-        <p style={{ color: "#3d4466", fontSize: 13, marginTop: 6, lineHeight: 1.6 }}>
+        <p style={{ color: "#64748b", fontSize: 13, marginTop: 6, lineHeight: 1.6 }}>
           Flip your {data.docType} and capture the back side.
         </p>
       </div>
@@ -850,8 +863,8 @@ function StepDocBack({
           borderRadius: 20,
           overflow: "hidden",
           position: "relative",
-          border: img ? "none" : "2px dashed #1c1f35",
-          background: img ? "transparent" : "#0d0f1c",
+          border: img ? "none" : "2px dashed #e2e8f0",
+          background: img ? "transparent" : "#fff",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -863,7 +876,7 @@ function StepDocBack({
         ) : (
           <div style={{ textAlign: "center" }}>
             <div style={{ fontSize: 40, marginBottom: 10 }}>🔄</div>
-            <p style={{ color: "#3d4466", fontSize: 14 }}>Tap to capture</p>
+            <p style={{ color: "#64748b", fontSize: 14 }}>Tap to capture</p>
           </div>
         )}
         {qual && (
@@ -890,7 +903,7 @@ function StepDocBack({
             style={{
               position: "absolute",
               inset: 0,
-              background: "#07080fcc",
+              background: "#f8f9facc",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -901,7 +914,7 @@ function StepDocBack({
               style={{
                 width: 32,
                 height: 32,
-                border: "3px solid #1c1f35",
+                border: "3px solid #e2e8f0",
                 borderTopColor: "#5b6ef5",
                 borderRadius: "50%",
               }}
@@ -969,7 +982,7 @@ function StepSelfie({
   data,
   onNext,
 }: {
-  data: { docType: string; frontImg?: string };
+  data: { docType: string; frontImg?: string; sessionId?: string };
   onNext: (d: Record<string, unknown>) => void;
 }) {
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -982,19 +995,19 @@ function StepSelfie({
     setLoading(true);
     setScore(null);
     const docUrl = data.frontImg;
-    const s = docUrl
-      ? await faceApiCompareFaces(docUrl, selfieUrl)
-      : 75; // no doc photo to compare
-    setScore(s);
+    const result = docUrl
+      ? await faceApiCompareFaces(docUrl, selfieUrl, data.sessionId as string | undefined)
+      : { score: 75, url: "" };
+    setScore(result.score);
     setLoading(false);
   }
 
-  function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
     if (!f) return;
-    const url = URL.createObjectURL(f);
-    setSelfie(url);
-    compare(url);
+    const dataUrl = await fileToDataUrl(f);
+    setSelfie(dataUrl);
+    compare(dataUrl);
   }
 
   return (
@@ -1002,10 +1015,10 @@ function StepSelfie({
       className="fadeUp"
       style={{
         width: "100%",
-        padding: "0 16px",
+        height: "100%",
         display: "flex",
         flexDirection: "column",
-        gap: 14,
+        overflow: "hidden",
       }}
     >
       {cam && (
@@ -1021,29 +1034,40 @@ function StepSelfie({
         />
       )}
 
-      <div style={S.card()}>
-        <h2
-          style={{ color: "#e0e4ff", fontSize: 20, fontFamily: "'DM Mono',monospace" }}
-        >
-          🤳 Take your selfie
-        </h2>
-        <p style={{ color: "#3d4466", fontSize: 13, marginTop: 6, lineHeight: 1.6 }}>
-          We'll compare your face to your {data.docType}. Look directly at the camera with
-          good lighting.
-        </p>
-      </div>
-
       <div
         style={{
-          width: selfie ? "100%" : "75vw",
-          aspectRatio: "1/1",
-          maxHeight: 340,
-          borderRadius: selfie ? 20 : "50%",
+          flex: 1,
+          overflowY: "auto",
+          padding: "0 16px 24px",
+          display: "flex",
+          flexDirection: "column",
+          gap: 14,
+          WebkitOverflowScrolling: "touch",
+        }}
+      >
+        <div style={S.card()}>
+          <h2
+            style={{ color: "#1a1a2e", fontSize: 20, fontFamily: "'DM Mono',monospace" }}
+          >
+            🤳 Take your selfie
+          </h2>
+          <p style={{ color: "#64748b", fontSize: 13, marginTop: 6, lineHeight: 1.6 }}>
+            We'll compare your face to your {data.docType}. Look directly at the camera with
+            good lighting.
+          </p>
+        </div>
+
+        <div
+          style={{
+            width: selfie ? "100%" : "75vw",
+            aspectRatio: "1/1",
+            maxHeight: 220,
+            borderRadius: selfie ? 20 : "50%",
           overflow: "hidden",
           position: "relative",
           margin: "0 auto",
-          border: selfie ? "none" : "2px dashed #1c1f35",
-          background: "#0d0f1c",
+          border: selfie ? "none" : "2px dashed #e2e8f0",
+          background: "#fff",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -1061,7 +1085,7 @@ function StepSelfie({
         ) : (
           <div style={{ textAlign: "center" }}>
             <div style={{ fontSize: 42, marginBottom: 8 }}>👤</div>
-            <p style={{ color: "#3d4466", fontSize: 13 }}>Tap to open camera</p>
+            <p style={{ color: "#64748b", fontSize: 13 }}>Tap to open camera</p>
           </div>
         )}
         {score && (
@@ -1089,7 +1113,7 @@ function StepSelfie({
             style={{
               position: "absolute",
               inset: 0,
-              background: "#07080fcc",
+              background: "#f8f9facc",
               display: "flex",
               flexDirection: "column",
               alignItems: "center",
@@ -1102,7 +1126,7 @@ function StepSelfie({
               style={{
                 width: 36,
                 height: 36,
-                border: "3px solid #1c1f35",
+                border: "3px solid #e2e8f0",
                 borderTopColor: "#5b6ef5",
                 borderRadius: "50%",
               }}
@@ -1110,70 +1134,87 @@ function StepSelfie({
             <p style={{ color: "#5b6ef5", fontSize: 13 }}>Comparing with ID…</p>
           </div>
         )}
+        </div>
+
+        {selfie && (
+          <div style={{ display: "flex", gap: 10, flexShrink: 0 }}>
+            <button onClick={() => setSelfie(null)} style={{ ...S.ghostBtn, flex: 1 }}>
+              Retake
+            </button>
+            <label style={{ flex: 1, display: "flex" }}>
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/*"
+                style={{ display: "none" }}
+                onChange={handleFile}
+              />
+              <button
+                onClick={() => fileRef.current?.click()}
+                style={{ ...S.ghostBtn, flex: 1 }}
+              >
+                Upload
+              </button>
+            </label>
+          </div>
+        )}
+
+        {!selfie && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, flexShrink: 0 }}>
+            <button onClick={() => setCam(true)} style={{ ...S.primaryBtn() }}>
+              📷 Take Selfie
+            </button>
+            <label>
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/*"
+                style={{ display: "none" }}
+                onChange={handleFile}
+              />
+              <button onClick={() => fileRef.current?.click()} style={S.ghostBtn}>
+                Or upload from gallery
+              </button>
+            </label>
+          </div>
+        )}
       </div>
 
-      {selfie && (
-        <div style={{ display: "flex", gap: 10 }}>
-          <button onClick={() => setSelfie(null)} style={{ ...S.ghostBtn, flex: 1 }}>
-            Retake
-          </button>
-          <label style={{ flex: 1, display: "flex" }}>
-            <input
-              ref={fileRef}
-              type="file"
-              accept="image/*"
-              style={{ display: "none" }}
-              onChange={handleFile}
-            />
-            <button
-              onClick={() => fileRef.current?.click()}
-              style={{ ...S.ghostBtn, flex: 1 }}
-            >
-              Upload
-            </button>
-          </label>
-        </div>
-      )}
-
-      {!selfie && (
-        <>
-          <button onClick={() => setCam(true)} style={S.primaryBtn()}>
-            📷 Take Selfie
-          </button>
-          <label>
-            <input
-              ref={fileRef}
-              type="file"
-              accept="image/*"
-              style={{ display: "none" }}
-              onChange={handleFile}
-            />
-            <button onClick={() => fileRef.current?.click()} style={S.ghostBtn}>
-              Or upload from gallery
-            </button>
-          </label>
-        </>
-      )}
-
-      <button
-        style={S.primaryBtn(!selfie || loading || !score)}
-        disabled={!selfie || loading || !score}
-        onClick={() => onNext({ selfie, faceScore: score })}
+      {/* Sticky bottom bar - always visible on mobile */}
+      <div
+        style={{
+          flexShrink: 0,
+          padding: "16px 16px max(16px, env(safe-area-inset-bottom))",
+          background: "#f8f9fa",
+          borderTop: "1px solid #e2e8f0",
+        }}
       >
-        Continue →
-      </button>
+        <button
+          style={S.primaryBtn(!selfie || loading || !score)}
+          disabled={!selfie || loading || !score}
+          onClick={() => onNext({ selfie, faceScore: score })}
+        >
+          Continue →
+        </button>
+      </div>
     </div>
   );
 }
 
 /* ─── STEP 5: Liveness ───────────────────────────────────────────────────── */
-function StepLiveness({ onNext }: { onNext: (d: Record<string, unknown>) => void }) {
+const LIVENESS_DURATION = 8;
+
+function StepLiveness({
+  data,
+  onNext,
+}: {
+  data: { sessionId?: string };
+  onNext: (d: Record<string, unknown>) => void;
+}) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [phase, setPhase] = useState<"intro" | "running" | "analyzing" | "done">("intro");
-  const [idx, setIdx] = useState(0);
-  const [done, setDone] = useState<string[]>([]);
-  const [secs, setSecs] = useState(4);
+  const [secs, setSecs] = useState(LIVENESS_DURATION);
   const [lScore, setLScore] = useState<number | null>(null);
   const [camErr, setCamErr] = useState(false);
 
@@ -1181,35 +1222,30 @@ function StepLiveness({ onNext }: { onNext: (d: Record<string, unknown>) => void
     if (phase !== "running") return;
     let cancelled = false;
     (async () => {
-      for (let i = 0; i < CHALLENGES.length; i++) {
+      for (let s = LIVENESS_DURATION; s > 0; s--) {
         if (cancelled) return;
-        setIdx(i);
-        setSecs(4);
-        for (let s = 4; s > 0; s--) {
-          if (cancelled) return;
-          setSecs(s);
-          await sleep(1000);
-        }
-        if (cancelled) return;
-        setDone((p) => [...p, CHALLENGES[i].id]);
+        setSecs(s);
+        await sleep(1000);
       }
+      if (cancelled) return;
       setPhase("analyzing");
       const video = videoRef.current;
-      const s = video ? await faceApiLiveness(video) : 75;
+      const result = video ? await faceApiLiveness(video, data.sessionId) : { score: 75, url: "" };
       if (cancelled) return;
-      setLScore(s);
+      setLScore(result.score);
       setPhase("done");
     })();
     return () => {
       cancelled = true;
     };
-  }, [phase]);
+  }, [phase, data.sessionId]);
 
   async function startCamera() {
     try {
       const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
       setStream(s);
       if (videoRef.current) videoRef.current.srcObject = s;
+      setSecs(LIVENESS_DURATION);
       setPhase("running");
     } catch {
       setCamErr(true);
@@ -1225,17 +1261,23 @@ function StepLiveness({ onNext }: { onNext: (d: Record<string, unknown>) => void
     [stream]
   );
 
-  const cur = CHALLENGES[idx] ?? CHALLENGES[0];
+  const r = 54;
+  const c = 2 * Math.PI * r;
+  const progress = phase === "running" ? (LIVENESS_DURATION - secs) / LIVENESS_DURATION : 1;
+  const strokeOffset = c - progress * c;
 
   return (
     <div
       className="fadeUp"
       style={{
         width: "100%",
-        padding: "0 16px",
+        flex: 1,
+        overflowY: "auto",
+        padding: "0 16px 24px",
         display: "flex",
         flexDirection: "column",
         gap: 14,
+        WebkitOverflowScrolling: "touch",
       }}
     >
       {phase === "intro" && (
@@ -1243,25 +1285,16 @@ function StepLiveness({ onNext }: { onNext: (d: Record<string, unknown>) => void
           <div style={S.card()}>
             <h2
               style={{
-                color: "#e0e4ff",
+                color: "#1a1a2e",
                 fontSize: 20,
                 fontFamily: "'DM Mono',monospace",
               }}
             >
               👁️ Liveness check
             </h2>
-            <p style={{ color: "#3d4466", fontSize: 13, marginTop: 6, lineHeight: 1.7 }}>
-              We need to confirm you're a real person. You'll be asked to perform{" "}
-              {CHALLENGES.length} quick actions.
+            <p style={{ color: "#64748b", fontSize: 13, marginTop: 6, lineHeight: 1.7 }}>
+              We need to confirm you're a real person. Look at the camera for 8 seconds.
             </p>
-            <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 8 }}>
-              {CHALLENGES.map((c) => (
-                <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <span style={{ fontSize: 18 }}>{c.icon}</span>
-                  <span style={{ color: "#4a5080", fontSize: 13 }}>{c.text}</span>
-                </div>
-              ))}
-            </div>
           </div>
           {camErr && (
             <p style={{ color: "#ff4560", fontSize: 13, textAlign: "center" }}>
@@ -1269,7 +1302,7 @@ function StepLiveness({ onNext }: { onNext: (d: Record<string, unknown>) => void
             </p>
           )}
           <button onClick={startCamera} style={S.primaryBtn()}>
-            ▶ Start Check
+            ▶ Start
           </button>
         </>
       )}
@@ -1316,23 +1349,51 @@ function StepLiveness({ onNext }: { onNext: (d: Record<string, unknown>) => void
               <div
                 style={{
                   position: "absolute",
-                  top: 16,
+                  top: "50%",
                   left: "50%",
-                  transform: "translateX(-50%)",
-                  width: 48,
-                  height: 48,
-                  borderRadius: "50%",
-                  background: "rgba(91,110,245,.2)",
-                  border: "2px solid #5b6ef5",
+                  transform: "translate(-50%, -50%)",
+                  width: 120,
+                  height: 120,
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  color: "#8b9cff",
-                  fontWeight: 800,
-                  fontSize: 20,
                 }}
               >
-                {secs}
+                <svg
+                  width="120"
+                  height="120"
+                  style={{
+                    position: "absolute",
+                    transform: "rotate(-90deg)",
+                  }}
+                >
+                  <circle cx="60" cy="60" r={r} fill="none" stroke="#e2e8f0" strokeWidth="6" />
+                  <circle
+                    cx="60"
+                    cy="60"
+                    r={r}
+                    fill="none"
+                    stroke="#5b6ef5"
+                    strokeWidth="6"
+                    strokeDasharray={c}
+                    strokeDashoffset={strokeOffset}
+                    strokeLinecap="round"
+                    style={{ transition: "stroke-dashoffset 1s linear" }}
+                  />
+                </svg>
+                <span
+                  style={{
+                    position: "relative",
+                    zIndex: 1,
+                    color: "#fff",
+                    fontWeight: 800,
+                    fontSize: 28,
+                    fontFamily: "'DM Mono',monospace",
+                    textShadow: "0 1px 4px rgba(0,0,0,.5)",
+                  }}
+                >
+                  {secs}
+                </span>
               </div>
             )}
             {phase === "analyzing" && (
@@ -1340,7 +1401,7 @@ function StepLiveness({ onNext }: { onNext: (d: Record<string, unknown>) => void
                 style={{
                   position: "absolute",
                   inset: 0,
-                  background: "#07080fcc",
+                  background: "#f8f9facc",
                   display: "flex",
                   flexDirection: "column",
                   gap: 12,
@@ -1353,7 +1414,7 @@ function StepLiveness({ onNext }: { onNext: (d: Record<string, unknown>) => void
                   style={{
                     width: 40,
                     height: 40,
-                    border: "3px solid #1c1f35",
+                    border: "3px solid #e2e8f0",
                     borderTopColor: "#5b6ef5",
                     borderRadius: "50%",
                   }}
@@ -1362,54 +1423,6 @@ function StepLiveness({ onNext }: { onNext: (d: Record<string, unknown>) => void
               </div>
             )}
           </div>
-
-          {phase === "running" && (
-            <div style={S.card({ textAlign: "center", padding: "20px 20px" })}>
-              <div style={{ fontSize: 36, marginBottom: 8 }}>{cur.icon}</div>
-              <div
-                style={{
-                  color: "#e0e4ff",
-                  fontSize: 18,
-                  fontWeight: 700,
-                  marginBottom: 4,
-                }}
-              >
-                {cur.text}
-              </div>
-              <div style={{ color: "#3d4466", fontSize: 12 }}>{cur.sub}</div>
-            </div>
-          )}
-
-          <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
-            {CHALLENGES.map((c, i) => (
-              <div
-                key={c.id}
-                style={{
-                  width: 28,
-                  height: 28,
-                  borderRadius: "50%",
-                  fontSize: 14,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  background: done.includes(c.id)
-                    ? "#00d98b20"
-                    : i === idx && phase === "running"
-                      ? "#5b6ef520"
-                      : "#1c1f35",
-                  border: done.includes(c.id)
-                    ? "1.5px solid #00d98b60"
-                    : i === idx && phase === "running"
-                      ? "1.5px solid #5b6ef5"
-                      : "1.5px solid transparent",
-                  color: done.includes(c.id) ? "#00d98b" : "#3d4466",
-                  transition: "all .3s",
-                }}
-              >
-                {done.includes(c.id) ? "✓" : c.icon}
-              </div>
-            ))}
-          </div>
         </>
       )}
 
@@ -1417,25 +1430,7 @@ function StepLiveness({ onNext }: { onNext: (d: Record<string, unknown>) => void
         <>
           <div style={{ textAlign: "center", padding: "20px 0 8px" }}>
             <ScoreRing score={lScore} color={lScore >= 75 ? "#00d98b" : "#f5a623"} />
-            <p style={{ color: "#3d4466", fontSize: 12, marginTop: 8 }}>LIVENESS SCORE</p>
-          </div>
-          <div style={S.card()}>
-            {CHALLENGES.map((c) => (
-              <div
-                key={c.id}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10,
-                  padding: "10px 0",
-                  borderBottom: "1px solid #1c1f35",
-                }}
-              >
-                <span style={{ fontSize: 18 }}>{c.icon}</span>
-                <span style={{ color: "#4a5080", fontSize: 13, flex: 1 }}>{c.text}</span>
-                <span style={{ color: "#00d98b" }}>✓</span>
-              </div>
-            ))}
+            <p style={{ color: "#64748b", fontSize: 12, marginTop: 8 }}>LIVENESS SCORE</p>
           </div>
           <button
             style={S.primaryBtn()}
@@ -1454,7 +1449,7 @@ function StepResult({
   data,
 }: {
   data: {
-    country: (typeof COUNTRIES)[0];
+    country: CountryConfig;
     docType: string;
     faceScore: number;
     livenessScore: number;
@@ -1500,29 +1495,29 @@ function StepResult({
         >
           {v.label}
         </div>
-        <p style={{ color: "#1c1f35", fontSize: 11, marginTop: 8, letterSpacing: 1 }}>{id}</p>
+        <p style={{ color: "#64748b", fontSize: 11, marginTop: 8, letterSpacing: 1 }}>{id}</p>
       </div>
 
       <div style={S.card()}>
         <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-          <div style={{ flex: 1, padding: "10px 12px", background: "#12152a", borderRadius: 10 }}>
+          <div style={{ flex: 1, padding: "10px 12px", background: "#f1f5f9", borderRadius: 10 }}>
             <p style={{ ...S.label, marginBottom: 4 }}>COUNTRY</p>
-            <p style={{ color: "#e0e4ff", fontSize: 14 }}>
+            <p style={{ color: "#1a1a2e", fontSize: 14 }}>
               {data.country.flag} {data.country.name}
             </p>
           </div>
-          <div style={{ flex: 1, padding: "10px 12px", background: "#12152a", borderRadius: 10 }}>
+          <div style={{ flex: 1, padding: "10px 12px", background: "#f1f5f9", borderRadius: 10 }}>
             <p style={{ ...S.label, marginBottom: 4 }}>DOCUMENT</p>
-            <p style={{ color: "#e0e4ff", fontSize: 14 }}>🪪 {data.docType}</p>
+            <p style={{ color: "#1a1a2e", fontSize: 14 }}>🪪 {data.docType}</p>
           </div>
         </div>
 
         {rows.map((r) => (
           <div key={r.label} style={{ marginBottom: 14 }}>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-              <span style={{ color: "#4a5080", fontSize: 12 }}>
+              <span style={{ color: "#64748b", fontSize: 12 }}>
                 {r.label}{" "}
-                <span style={{ color: "#1c1f35" }}>({r.weight})</span>
+                <span style={{ color: "#94a3b8" }}>({r.weight})</span>
               </span>
               <span
                 style={{
@@ -1534,7 +1529,7 @@ function StepResult({
                 {r.score}/100
               </span>
             </div>
-            <div style={{ height: 5, borderRadius: 3, background: "#1c1f35" }}>
+            <div style={{ height: 5, borderRadius: 3, background: "#e2e8f0" }}>
               <div
                 style={{
                   height: "100%",
@@ -1558,7 +1553,7 @@ function StepResult({
           borderRadius: 14,
           background: v.color + "10",
           border: `1px solid ${v.color}30`,
-          color: "#4a5080",
+          color: "#64748b",
           fontSize: 13,
           lineHeight: 1.7,
         }}
@@ -1605,9 +1600,16 @@ function StepResult({
 export default function App() {
   const [step, setStep] = useState(1);
   const [data, setData] = useState<Record<string, unknown>>({});
+  const [countries, setCountries] = useState<CountryConfig[]>(FALLBACK_COUNTRIES);
 
   useEffect(() => {
     loadFaceApiModels();
+  }, []);
+
+  useEffect(() => {
+    fetchConfig()
+      .then((c) => setCountries(c.countries))
+      .catch(() => {});
   }, []);
   const needsBack = Boolean(data.docType && data.docType !== "Passport");
   const TOTAL = needsBack ? 6 : 5;
@@ -1662,7 +1664,7 @@ export default function App() {
             </div>
             <span
               style={{
-                color: "#e0e4ff",
+                color: "#1a1a2e",
                 fontWeight: 800,
                 fontSize: 15,
                 letterSpacing: 1,
@@ -1671,7 +1673,7 @@ export default function App() {
               VerifyID
             </span>
           </div>
-          <span style={{ color: "#1c1f35", fontSize: 11, letterSpacing: 2 }}>
+          <span style={{ color: "#64748b", fontSize: 11, letterSpacing: 2 }}>
             {data.country && typeof data.country === "object" && "flag" in data.country && "code" in data.country
               ? `${(data.country as { flag: string; code: string }).flag} ${(data.country as { flag: string; code: string }).code}`
               : "KYC"}
@@ -1680,25 +1682,28 @@ export default function App() {
 
         <TopBar step={step} total={TOTAL} onBack={showBack ? back : null} />
 
-        <div style={{ width: "100%", padding: "0 20px 12px" }}>
-          <p style={{ color: "#3d4466", fontSize: 11, letterSpacing: 2 }}>
+        <div style={{ width: "100%", padding: "0 20px 12px", flexShrink: 0 }}>
+          <p style={{ color: "#64748b", fontSize: 11, letterSpacing: 2 }}>
             {String(stepLabel[step - 1] ?? "").toUpperCase()}
           </p>
         </div>
 
-        {step === 1 && <StepCountry onNext={(d) => advance(d)} />}
-        {step === 2 && <StepDocFront data={data as { country: (typeof COUNTRIES)[0]; docType: string }} onNext={(d) => advance(d)} />}
+        <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", width: "100%" }}>
+          {step === 1 && <StepCountry countries={countries} onNext={(d) => advance(d)} />}
+        {step === 2 && <StepDocFront data={data as { country: CountryConfig; docType: string; sessionId?: string }} onNext={(d) => advance(d)} />}
         {step === 3 && needsBack && (
-          <StepDocBack data={data as { docType: string }} onNext={(d) => advance(d)} />
+          <StepDocBack data={data as { docType: string; sessionId?: string }} onNext={(d) => advance(d)} />
         )}
         {step === (needsBack ? 4 : 3) && (
-          <StepSelfie data={data as { docType: string }} onNext={(d) => advance(d)} />
+          <StepSelfie data={data as { docType: string; frontImg?: string; sessionId?: string }} onNext={(d) => advance(d)} />
         )}
-        {step === (needsBack ? 5 : 4) && <StepLiveness onNext={(d) => advance(d)} />}
+        {step === (needsBack ? 5 : 4) && (
+          <StepLiveness data={data as { sessionId?: string }} onNext={(d) => advance(d)} />
+        )}
         {step === (needsBack ? 6 : 5) && (
           <StepResult
             data={data as {
-              country: (typeof COUNTRIES)[0];
+              country: CountryConfig;
               docType: string;
               faceScore: number;
               livenessScore: number;
@@ -1706,6 +1711,7 @@ export default function App() {
             }}
           />
         )}
+        </div>
       </div>
     </>
   );

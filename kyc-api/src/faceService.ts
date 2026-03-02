@@ -6,6 +6,7 @@ import {
   DetectFacesCommand,
   CompareFacesCommand,
 } from "@aws-sdk/client-rekognition";
+import { uploadToS3 } from "./s3Service.js";
 
 const client = new RekognitionClient({
   region: process.env.AWS_REGION || "us-east-1",
@@ -16,8 +17,16 @@ function base64ToBytes(dataUrl: string): Uint8Array {
   return new Uint8Array(Buffer.from(base64, "base64"));
 }
 
-/** Document quality: detect face presence, return 0-100 */
-export async function analyzeDocQuality(imageBase64: string): Promise<number> {
+/** Document quality: upload to S3, detect face presence, return { score, url } */
+export async function analyzeDocQuality(
+  imageBase64: string,
+  sessionId?: string,
+  type: "doc" | "docBack" = "doc"
+): Promise<{ score: number; url: string }> {
+  let url = "";
+  if (sessionId) {
+    url = (await uploadToS3(sessionId, type, imageBase64)) ?? "";
+  }
   try {
     const { FaceDetails } = await client.send(
       new DetectFacesCommand({
@@ -26,21 +35,26 @@ export async function analyzeDocQuality(imageBase64: string): Promise<number> {
       })
     );
 
-    if (!FaceDetails?.length) return 45;
+    if (!FaceDetails?.length) return { score: 45, url };
     const confidence = FaceDetails[0].Confidence ?? 0;
     const score = Math.round(confidence);
-    return Math.min(95, Math.max(50, score));
+    return { score: Math.min(95, Math.max(50, score)), url };
   } catch (err) {
     console.error("analyzeDocQuality:", err);
-    return 55;
+    return { score: 55, url };
   }
 }
 
-/** Face match: compare doc photo to selfie. Returns 0-100. */
+/** Face match: upload selfie to S3 (doc already uploaded in analyzeDocQuality), compare, return { score, url } (url = selfie) */
 export async function compareFaces(
   documentBase64: string,
-  selfieBase64: string
-): Promise<number> {
+  selfieBase64: string,
+  sessionId?: string
+): Promise<{ score: number; url: string }> {
+  let url = "";
+  if (sessionId) {
+    url = (await uploadToS3(sessionId, "selfie", selfieBase64)) ?? "";
+  }
   try {
     const { FaceMatches } = await client.send(
       new CompareFacesCommand({
@@ -50,17 +64,25 @@ export async function compareFaces(
       })
     );
 
-    if (!FaceMatches?.length) return 40;
+    if (!FaceMatches?.length) return { score: 40, url };
     const similarity = FaceMatches[0].Similarity ?? 0;
-    return Math.round(Math.min(98, Math.max(25, similarity)));
+    const score = Math.round(Math.min(98, Math.max(25, similarity)));
+    return { score, url };
   } catch (err) {
     console.error("compareFaces:", err);
-    return 50;
+    return { score: 50, url };
   }
 }
 
-/** Liveness: detect face in frame. Returns 0-100. */
-export async function analyzeLiveness(imageBase64: string): Promise<number> {
+/** Liveness: upload to S3, detect face in frame, return { score, url } */
+export async function analyzeLiveness(
+  imageBase64: string,
+  sessionId?: string
+): Promise<{ score: number; url: string }> {
+  let url = "";
+  if (sessionId) {
+    url = (await uploadToS3(sessionId, "liveness", imageBase64)) ?? "";
+  }
   try {
     const { FaceDetails } = await client.send(
       new DetectFacesCommand({
@@ -69,12 +91,12 @@ export async function analyzeLiveness(imageBase64: string): Promise<number> {
       })
     );
 
-    if (!FaceDetails?.length) return 55;
+    if (!FaceDetails?.length) return { score: 55, url };
     const confidence = FaceDetails[0].Confidence ?? 0;
     const score = Math.round(confidence);
-    return Math.min(95, Math.max(60, score));
+    return { score: Math.min(95, Math.max(60, score)), url };
   } catch (err) {
     console.error("analyzeLiveness:", err);
-    return 70;
+    return { score: 70, url };
   }
 }
