@@ -69,6 +69,17 @@ export async function compareFaces(
   return { score: res.score, url: res.url ?? "" };
 }
 
+/** Submit all images for verification. Returns scores. */
+export async function verify(params: {
+  frontImg: string;
+  backImg?: string;
+  selfie: string;
+  livenessImg: string;
+  sessionId?: string;
+}): Promise<{ docScore: number; faceScore: number; livenessScore: number; overall: number }> {
+  return post("/verify", params);
+}
+
 /** Liveness: capture frame from video, send to backend. Returns { score, url }. */
 export async function analyzeLiveness(
   videoElement: HTMLVideoElement,

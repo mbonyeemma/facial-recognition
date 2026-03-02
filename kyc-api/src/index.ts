@@ -68,6 +68,45 @@ app.post<{ Body: { image: string; sessionId?: string } }>("/analyze-liveness", a
   }
 });
 
+// POST /verify - submit all images at once, run verification on server
+app.post<{
+  Body: {
+    frontImg: string;
+    backImg?: string;
+    selfie: string;
+    livenessImg: string;
+    sessionId?: string;
+  };
+}>("/verify", async (req, reply) => {
+  const { frontImg, backImg, selfie, livenessImg, sessionId } = req.body ?? {};
+  if (!frontImg || !selfie || !livenessImg) {
+    return reply.status(400).send({ error: "Missing frontImg, selfie, or livenessImg" });
+  }
+  try {
+    const [docResult, backResult, faceResult, livenessResult] = await Promise.all([
+      analyzeDocQuality(frontImg, sessionId, "doc"),
+      backImg ? analyzeDocQuality(backImg, sessionId, "docBack") : Promise.resolve({ score: 85, url: "" }),
+      compareFaces(frontImg, selfie, sessionId),
+      analyzeLiveness(livenessImg, sessionId),
+    ]);
+    const docScore = backImg
+      ? Math.round((docResult.score + backResult!.score) / 2)
+      : docResult.score;
+    const overall = Math.round(
+      faceResult.score * 0.45 + livenessResult.score * 0.35 + docScore * 0.2
+    );
+    return {
+      docScore,
+      faceScore: faceResult.score,
+      livenessScore: livenessResult.score,
+      overall,
+    };
+  } catch (err) {
+    req.log.error(err);
+    return reply.status(500).send({ error: "Verification failed" });
+  }
+});
+
 const port = Number(process.env.PORT) || 3001;
 await app.listen({ port, host: "0.0.0.0" });
 console.log(`KYC API running at http://localhost:${port}`);
